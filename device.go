@@ -13,10 +13,11 @@ type Inverter struct {
 
 // Converter JSON init
 type Converter struct {
-	Voltage float64 `json:"voltage"`
-	Current float64 `json:"current"`
-	Power   int     `json:"power"`
-	Temp    int     `json:"temp"`
+	Voltage  float64 `json:"voltage"`
+	Current1 float64 `json:"current1"`
+	Current2 float64 `json:"current2"`
+	Power    int     `json:"power"`
+	Temp     int     `json:"temp"`
 }
 
 // Pack battery init

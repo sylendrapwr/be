@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,7 +28,7 @@ func Emptyjson() *Harvester {
 	S := 0
 	I := 0
 	C := 0
-	PP := Converter{Voltage: 0, Current: 0, Power: 0, Temp: 0}
+	PP := Converter{Voltage: 0, Current1: 0, Current2: 0, Power: 0, Temp: 0}
 	IP := Inverter{Voltage: 0, Current: 0, Power: 0, Temp: 0, PF: 0, Freq: 0, Quality: 0}
 	SP := [5]Pack{}
 	for i := 0; i < 5; i++ {
@@ -157,11 +159,77 @@ func GetPack(id int, port string) (s Pack, vt float64, e error) {
 	return
 }
 
+// GetMcu ......
+func GetMcu(port string) (c Converter, e error) {
+	// Converter
+	c = Converter{Voltage: 0.0, Current1: 0.0, Current2: 0.0, Power: 0, Temp: 0}
+	p, err := serial.Open(port,
+		serial.WithBaudrate(9600),
+		serial.WithDataBits(8),
+		serial.WithParity(serial.NoParity),
+		serial.WithStopBits(serial.OneStopBit),
+		serial.WithReadTimeout(2000),
+		serial.WithWriteTimeout(1000),
+	)
+	defer p.Close()
+	if err != nil {
+		e = err
+		return
+	}
+
+	// Voltage
+	_, err = p.Write([]byte("a"))
+	if err != nil {
+		e = err
+		return
+	}
+	buf := make([]byte, 50)
+	n, err := p.Read(buf)
+	if err != nil {
+		e = err
+		return
+	}
+	if n == 0 {
+		e = errors.New("EOF")
+		return
+	}
+
+	data := string(buf)
+	splittedData := strings.Split(data, "#")
+	power, err := strconv.Atoi(splittedData[5])
+	if err != nil {
+		e = err
+		return
+	}
+	voltage, err := strconv.ParseFloat(splittedData[2], 64)
+	if err != nil {
+		e = err
+		return
+	}
+	current1, err := strconv.ParseFloat(splittedData[3], 64)
+	if err != nil {
+		e = err
+		return
+	}
+	current2, err := strconv.ParseFloat(splittedData[4], 64)
+	if err != nil {
+		e = err
+		return
+	}
+	c.Voltage = voltage
+	c.Power = power
+	c.Current1 = current1
+	c.Current2 = current2
+
+	e = nil
+	return
+}
+
 // GetPzem .......
-func GetPzem() (i Inverter, e error) {
+func GetPzem(port string) (i Inverter, e error) {
 	// Inverter
 	i = Inverter{Voltage: 0, Current: 0, Power: 0, Temp: 0, PF: 0, Freq: 0, Quality: 0}
-	handler := modbus.NewRTUClientHandler("/dev/ttyUSB0")
+	handler := modbus.NewRTUClientHandler(port)
 	handler.BaudRate = 9600
 	handler.DataBits = 8
 	handler.Parity = "N"
@@ -209,27 +277,27 @@ func GetPzem() (i Inverter, e error) {
 func InitMain(emptyJSON *Harvester) {
 	go func() {
 		var lock sync.Mutex
-		timerCycle := time.NewTicker(time.Minute)
-		defer timerCycle.Stop()
-		timerMCU := time.NewTicker(time.Second)
-		defer timerMCU.Stop()
+		timer := time.NewTicker(time.Second)
+		defer timer.Stop()
 		for {
 			select {
-			case <-timerCycle.C:
-				go func() {
-					lock.Lock()
-					defer lock.Unlock()
-				}()
-			case <-timerMCU.C:
+			case <-timer.C:
 				go func() {
 					lock.Lock()
 					defer lock.Unlock()
 
 					// Consumption
-					con, err := GetPzem()
+					con, err := GetPzem("/dev/ttyUSB1")
 					if err == nil {
 						emptyJSON.ConsumptionP = con
 						emptyJSON.Consumption = con.Power
+					}
+
+					// Production
+					pro, err := GetMcu("/dev/ttyUSB0")
+					if err == nil {
+						emptyJSON.ProductionP = pro
+						emptyJSON.Production = pro.Power
 					}
 				}()
 			}
@@ -239,28 +307,22 @@ func InitMain(emptyJSON *Harvester) {
 	go func() {
 		persen := 0.0 // persentase daya tersimpan
 		count := 0    // cycle count
-		vp := 0.0     // tegangan produksi
-		ip := 0.0     // arus produksi
-		tp := 0       // temperature produksi
+
+		portList := [5]string{
+			"/dev/ttyUSB2",
+			"/dev/ttyUSB3",
+			"/dev/ttyUSB4",
+			"/dev/ttyUSB5",
+			"/dev/ttyUSB6",
+		}
 
 		for i := 0; i < 5; i++ {
-			str, vt, err := GetPack(i, "")
+			str, vt, err := GetPack(i, portList[i])
 			if err == nil {
 				count++
 				persen = persen + vt
 				emptyJSON.StorageP[i] = str
-				vp = vp + vt
-				ip = ip + (emptyJSON.StorageP[i].Current * -1)
-				tp = emptyJSON.StorageP[i].Temp
-			}
-		}
-		if count > 0 {
-			emptyJSON.Storage = int(persen / float64(count))
-			if ip > 0 {
-				emptyJSON.ProductionP.Voltage = vp / float64(count)
-				emptyJSON.ProductionP.Current = ip
-				emptyJSON.ProductionP.Power = int(emptyJSON.ProductionP.Voltage * ip)
-				emptyJSON.ProductionP.Temp = tp / count
+				emptyJSON.Storage = int(persen / float64(count))
 			}
 		}
 	}()

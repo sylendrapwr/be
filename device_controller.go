@@ -33,8 +33,14 @@ func (d *ImplDeviceController) GetData(ctx *gin.Context) {
 	return
 }
 
-//GetPortList from MCU
+//GetPortList from Python
 func (d *ImplDeviceController) GetPortList(ctx *gin.Context) {
 	ctx.Status(http.StatusOK)
+	return
+}
+
+// GetControllSignal from MCU
+func GetControllSignal(ctx *gin.Context) {
+
 	return
 }
