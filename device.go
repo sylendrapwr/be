@@ -42,13 +42,3 @@ type Harvester struct {
 	ConsumptionP Inverter  `json:"e-consumption"`
 	StorageP     [5]Pack   `json:"e-harvester"`
 }
-
-// Token init
-type Token struct {
-	Number string `json:"number"`
-}
-
-// PortList ..
-type PortList struct {
-	List string `json:"list"`
-}

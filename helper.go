@@ -11,18 +11,6 @@ import (
 	"github.com/goburrow/modbus"
 )
 
-// Emptytoken ....
-func Emptytoken() *Token {
-	T := Token{Number: ""}
-	return &T
-}
-
-// Emptylist ....
-func Emptylist() *PortList {
-	L := PortList{List: ""}
-	return &L
-}
-
 // Emptyjson .....
 func Emptyjson() *Harvester {
 	S := 0

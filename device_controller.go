@@ -9,14 +9,12 @@ import (
 //DeviceController is interface to controller device
 type DeviceController interface {
 	GetData(ctx *gin.Context)
-	GetPortList(ctx *gin.Context)
 }
 
 //NewDeviceController is function to make new implements struct from Interface
-func NewDeviceController(j *Harvester, l *PortList) DeviceController {
+func NewDeviceController(j *Harvester) DeviceController {
 	Impl := ImplDeviceController{
 		harvester: j,
-		list:      l,
 	}
 	return &Impl
 }
@@ -24,7 +22,6 @@ func NewDeviceController(j *Harvester, l *PortList) DeviceController {
 //ImplDeviceController is implement struct from DeviceController
 type ImplDeviceController struct {
 	harvester *Harvester
-	list      *PortList
 }
 
 //GetData from MCU
