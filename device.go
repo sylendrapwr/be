@@ -23,7 +23,7 @@ type Converter struct {
 // Pack battery init
 type Pack struct {
 	Data    [14]float64 `json:"data"`
-	Current float64     `json:"current"`
+	Current int         `json:"current"`
 	Cap     int         `json:"cap"`
 	Cycle   int         `json:"cycle"`
 	Temp    int         `json:"temp1"`

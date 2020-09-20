@@ -39,8 +39,12 @@ func (d *ImplDeviceController) GetPortList(ctx *gin.Context) {
 	return
 }
 
-// GetControllSignal from MCU
-func GetControllSignal(ctx *gin.Context) {
-
+// PostData ...
+func PostData(ctx *gin.Context) {
+	signal := ctx.PostForm("turnoff")
+	if signal == "1" {
+		SetMcu("/dev/ttyUSB0")
+	}
+	ctx.Status(http.StatusOK)
 	return
 }

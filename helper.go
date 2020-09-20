@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,7 +50,7 @@ func Emptyjson() *Harvester {
 
 // GetPack ........
 func GetPack(id int, port string) (s Pack, vt float64, e error) {
-	s = Pack{ID: id + 1, Cycle: 0, Cap: 0, Current: 0, Temp: 0,
+	s = Pack{ID: id, Cycle: 0, Cap: 0, Current: 0, Temp: 0,
 		Data: [14]float64{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}}
 	p, err := serial.Open(port,
 		serial.WithBaudrate(9600),
@@ -121,7 +123,7 @@ func GetPack(id int, port string) (s Pack, vt float64, e error) {
 		return
 	}
 	c := float64(buf[8])*256 + float64(buf[9])
-	s.Current = (c - 30000.0) * 0.1
+	s.Current = int((c - 30000.0) * 0.1)
 
 	// Temperature
 	_, err = p.Write([]byte("\xa5\x80\x96\x08\x00\x00\x00\x00\x00\x00\x00\x00\xc3"))
@@ -153,8 +155,130 @@ func GetPack(id int, port string) (s Pack, vt float64, e error) {
 	for i := 0; i < 14; i++ {
 		cap = cap + v[i]
 	}
-	vt = cap
 	s.Cap = int(((cap - 45.0) / 13.8) * 3048.0)
+	vt = (float64(s.Cap) * 100) / 3048
+	e = nil
+	return
+}
+
+// SetMcu .....
+func SetMcu(port string) (e error) {
+	p, err := serial.Open(port,
+		serial.WithBaudrate(9600),
+		serial.WithDataBits(8),
+		serial.WithParity(serial.NoParity),
+		serial.WithStopBits(serial.OneStopBit),
+		serial.WithReadTimeout(2000),
+		serial.WithWriteTimeout(1000),
+	)
+	defer p.Close()
+	if err != nil {
+		e = err
+		return
+	}
+
+	// Voltage
+	_, err = p.Write([]byte("b"))
+	if err != nil {
+		e = err
+		return
+	}
+	e = nil
+	return
+}
+
+func splitValue(value string) (result []string, e error) {
+	defer func() {
+		if r := recover(); r != nil {
+			e = errors.New("cannot split value")
+			return
+		}
+	}()
+	e = nil
+	result = strings.Split(value, "#")
+	return
+}
+
+// Block ...
+type Block struct {
+	Try     func()
+	Catch   func(Exception)
+	Finally func()
+}
+
+// Exception ...
+type Exception interface{}
+
+// Throw ....
+func Throw(up Exception) {
+	panic(up)
+}
+
+// Do ....
+func (tcf Block) Do() {
+	if tcf.Finally != nil {
+		defer tcf.Finally()
+	}
+	if tcf.Catch != nil {
+		defer func() {
+			if r := recover(); r != nil {
+				tcf.Catch(r)
+			}
+		}()
+	}
+	tcf.Try()
+}
+
+// NewSMBUS Factory method for SMBus
+func NewSMBUS(bus uint, address byte) (*SMBus, error) {
+	smb := &SMBus{bus: nil}
+	err := smb.BusOpen(bus)
+	if err != nil {
+		return nil, err
+	}
+	err = smb.SetAddr(address)
+	if err != nil {
+		return nil, err
+	}
+	return smb, nil
+}
+
+// GetMcuI2c ...
+func GetMcuI2c() (c Converter, e error) {
+	con, err := NewSMBUS(1, 0x04)
+	if err != nil {
+		e = err
+		os.Exit(1)
+		return
+	}
+
+	var result []byte
+	num, err := con.ReadI2cBlockData(0, result)
+	if err != nil {
+		e = err
+		return
+	}
+	fmt.Println(result)
+	if num != 6 {
+		e = errors.New("data corrupt")
+		return
+	}
+
+	voltage := float64(int(result[0])*255+int(result[1])) / 100
+	current1 := float64((int(result[2])*255+int(result[3]))-510) * 0.122070313
+	current2 := float64((int(result[4])*255+int(result[5]))-510) * 0.122070313
+	power := voltage * (current1 + current2)
+
+	c.Voltage = voltage
+	c.Current1 = current1
+	c.Current2 = current2
+	c.Power = int(power)
+
+	fmt.Println(voltage)
+	fmt.Println(current1)
+	fmt.Println(current2)
+	fmt.Println(power)
+
 	e = nil
 	return
 }
@@ -195,7 +319,12 @@ func GetMcu(port string) (c Converter, e error) {
 	}
 
 	data := string(buf)
+	fmt.Println(data)
 	splittedData := strings.Split(data, "#")
+	if len(splittedData) != 7 {
+		e = errors.New("data error")
+		return
+	}
 	power, err := strconv.Atoi(splittedData[5])
 	if err != nil {
 		e = err
@@ -273,12 +402,30 @@ func GetPzem(port string) (i Inverter, e error) {
 	return
 }
 
+// GetPortList ....
+func GetPortList() (s []string, e error) {
+	ports, err := serial.GetPortsList()
+	if err != nil {
+		e = err
+		return
+	}
+	if len(ports) <= 1 {
+		e = errors.New("BMS not found")
+	}
+
+	s = ports
+	e = nil
+	return
+}
+
 // InitMain ......
 func InitMain(emptyJSON *Harvester) {
 	go func() {
 		var lock sync.Mutex
 		timer := time.NewTicker(time.Second)
 		defer timer.Stop()
+		timer2 := time.NewTicker(time.Millisecond * 200)
+		defer timer2.Stop()
 		for {
 			select {
 			case <-timer.C:
@@ -287,14 +434,21 @@ func InitMain(emptyJSON *Harvester) {
 					defer lock.Unlock()
 
 					// Consumption
-					con, err := GetPzem("/dev/ttyUSB1")
+					con, err := GetPzem("/dev/ttyUSB0")
 					if err == nil {
 						emptyJSON.ConsumptionP = con
 						emptyJSON.Consumption = con.Power
 					}
+				}()
+
+			case <-timer2.C:
+				go func() {
+					lock.Lock()
+					defer lock.Unlock()
+					pro, err := GetMcuI2c()
 
 					// Production
-					pro, err := GetMcu("/dev/ttyUSB0")
+					fmt.Println(err)
 					if err == nil {
 						emptyJSON.ProductionP = pro
 						emptyJSON.Production = pro.Power
@@ -308,21 +462,16 @@ func InitMain(emptyJSON *Harvester) {
 		persen := 0.0 // persentase daya tersimpan
 		count := 0    // cycle count
 
-		portList := [5]string{
-			"/dev/ttyUSB2",
-			"/dev/ttyUSB3",
-			"/dev/ttyUSB4",
-			"/dev/ttyUSB5",
-			"/dev/ttyUSB6",
-		}
-
-		for i := 0; i < 5; i++ {
-			str, vt, err := GetPack(i, portList[i])
-			if err == nil {
-				count++
-				persen = persen + vt
-				emptyJSON.StorageP[i] = str
-				emptyJSON.Storage = int(persen / float64(count))
+		portList, err := GetPortList()
+		if err == nil {
+			for i := 1; i < len(portList); i++ {
+				str, vt, err := GetPack(i, portList[i])
+				if err == nil {
+					count++
+					persen = persen + vt
+					emptyJSON.StorageP[i-1] = str
+					emptyJSON.Storage = int(persen / float64(count))
+				}
 			}
 		}
 	}()

@@ -20,7 +20,7 @@ func main() {
 	//router init
 	router := gin.Default()
 	router.GET("/", getDataController.GetData)
-	router.POST("/", GetControllSignal)
+	router.POST("/", PostData)
 
 	router.Run(":5000")
 }
